@@ -10,6 +10,7 @@ from light_classification.tl_classifier import TLClassifier
 import tf
 import cv2
 import yaml
+from scipy.spatial import KDTree
 
 STATE_COUNT_THRESHOLD = 3
 
@@ -48,6 +49,8 @@ class TLDetector(object):
         self.last_state = TrafficLight.UNKNOWN
         self.last_wp = -1
         self.state_count = 0
+        self.waypoints_2d = None
+        self.waypoint_tree = None
 
         rospy.spin()
 
@@ -55,6 +58,10 @@ class TLDetector(object):
         self.pose = msg
 
     def waypoints_cb(self, waypoints):
+        if not self.waypoints_2d:
+            self.waypoints_2d = [[waypoint.pose.pose.position.x, waypoint.pose.pose.position.y] for waypoint in waypoints.waypoints]
+            self.waypoint_tree = KDTree(self.waypoints_2d)
+            
         self.waypoints = waypoints
 
     def traffic_cb(self, msg):
@@ -72,9 +79,12 @@ class TLDetector(object):
         self.camera_image = msg
         light_wp, state = self.process_traffic_lights()
 
+        rospy.loginfo('light')
+        rospy.loginfo(light_wp)
+        rospy.loginfo(state)
         '''
-        Publish upcoming red lights at camera frequency.
-        Each predicted state has to occur `STATE_COUNT_THRESHOLD` number
+        Publish upcoming        red lights at camera frequency.
+ Each predicted state has to occur `STATE_COUNT_THRESHOLD` number
         of times till we start using it. Otherwise the previous stable state is
         used.
         '''
@@ -90,7 +100,7 @@ class TLDetector(object):
             self.upcoming_red_light_pub.publish(Int32(self.last_wp))
         self.state_count += 1
 
-    def get_closest_waypoint(self, pose):
+    def get_closest_waypoint(self, x, y):
         """Identifies the closest path waypoint to the given position
             https://en.wikipedia.org/wiki/Closest_pair_of_points_problem
         Args:
@@ -100,8 +110,7 @@ class TLDetector(object):
             int: index of the closest waypoint in self.waypoints
 
         """
-        #TODO implement
-        return 0
+        return self.waypoint_tree.query([x, y], 1)[1]
 
     def get_light_state(self, light):
         """Determines the current color of the traffic light
@@ -113,6 +122,7 @@ class TLDetector(object):
             int: ID of traffic light color (specified in styx_msgs/TrafficLight)
 
         """
+        return light.state
         if(not self.has_image):
             self.prev_light_loc = None
             return False
@@ -131,19 +141,29 @@ class TLDetector(object):
             int: ID of traffic light color (specified in styx_msgs/TrafficLight)
 
         """
-        light = None
+        closest_light = None
+        closest_waypoint_idx = None
 
         # List of positions that correspond to the line to stop in front of for a given intersection
         stop_line_positions = self.config['stop_line_positions']
+        
         if(self.pose):
-            car_position = self.get_closest_waypoint(self.pose.pose)
+            car_waypoint_idx = self.get_closest_waypoint(self.pose.pose.position.x, self.pose.pose.position.y)
+            closest_waypoint_idx_diff = len(self.waypoints.waypoints) - car_waypoint_idx
+            
+            for i, light in enumerate(self.lights):
+                stop_line_waypoint_idx = self.get_closest_waypoint(stop_line_positions[i][0], stop_line_positions[i][1])
+                stop_line_waypoint_idx_diff = stop_line_waypoint_idx - car_waypoint_idx
+                
+                if stop_line_waypoint_idx_diff >= 0 and stop_line_waypoint_idx_diff < closest_waypoint_idx_diff:
+                    closest_waypoint_idx_diff = stop_line_waypoint_idx_diff
+                    closest_light = light
+                    closest_waypoint_idx = stop_line_waypoint_idx
 
-        #TODO find the closest visible traffic light (if one exists)
-
-        if light:
+        if closest_light:
             state = self.get_light_state(light)
-            return light_wp, state
-        self.waypoints = None
+            return closest_waypoint_idx, state
+        
         return -1, TrafficLight.UNKNOWN
 
 if __name__ == '__main__':
