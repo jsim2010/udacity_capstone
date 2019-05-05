@@ -22,6 +22,8 @@ class TLDetector(object):
         self.waypoints = None
         self.camera_image = None
         self.lights = []
+        self.waypoints_2d = None
+        self.waypoint_tree = None
 
         sub1 = rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
         sub2 = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
@@ -49,8 +51,6 @@ class TLDetector(object):
         self.last_state = TrafficLight.UNKNOWN
         self.last_wp = -1
         self.state_count = 0
-        self.waypoints_2d = None
-        self.waypoint_tree = None
 
         rospy.spin()
 
@@ -75,6 +75,9 @@ class TLDetector(object):
             msg (Image): image from car-mounted camera
 
         """
+        if not self.waypoint_tree:
+            return
+        
         self.has_image = True
         self.camera_image = msg
         light_wp, state = self.process_traffic_lights()
@@ -119,7 +122,6 @@ class TLDetector(object):
             int: ID of traffic light color (specified in styx_msgs/TrafficLight)
 
         """
-        return light.state
         if(not self.has_image):
             self.prev_light_loc = None
             return False
